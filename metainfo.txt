@@ -1,0 +1,7 @@
+
+Name of Quantlet: PricingKernel_NonMonotone
+Published in: 'Non'
+Description: 'Calculate the Pricing Kernel estimation for Crypto Currencies and SP500 options based on classical method and CDI method'
+Keywords: 'Pricing kernel, R, Crypto, SP500, Option, puzzle, CDI'
+Author: 'Ruting Rainy WANG; Lei Tracy ZHOU; Xiaorui ZUO' 
+Submitted:  '17.10.2024'
