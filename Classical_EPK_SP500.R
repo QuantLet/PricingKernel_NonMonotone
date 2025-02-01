@@ -118,7 +118,7 @@ rolling = 4
 # tau_files <- grep( paste0("raw_Q_density.*tau",tau,"\\.csv$"), directories, value = TRUE)
 # dates <- gsub("raw_Q_density_([0-9]{4}-[0-9]{2}-[0-9]{2})_tau.*", "\\1", tau_files)
 # dates_Q <- dates[1:(length(dates) - 1)]
-date_tau = read_excel('SP500_Classic_date.xlsx')
+date_tau = read_excel('SP500_Classic_date.xlsx','Sheet1')
 date_tau$dates_Q = as.character(date_tau$dates_Q )
 
 for (i in c(1:nrow(date_tau))){
@@ -126,20 +126,16 @@ for (i in c(1:nrow(date_tau))){
   tau = date_tau$tau[i]
   figure_save = paste0(path,"EPKPlot_SP500/tau_",tau)
   dir.create(figure_save, showWarnings = FALSE)
-  a <- paste0(path_Qfile,"raw_Q_density_", date_tau$dates_Q[i], "_tau", date_tau$tau[i], ".csv")
-  
+  # a <- paste0(path_Qfile,"raw_Q_density_", date_tau$dates_Q[i], "_tau", date_tau$tau[i], ".csv")
+  Q_band <- paste0(path_Qfile,"raw_Q_density_", date_tau$dates_Q[i], "_tau", date_tau$tau[i], "_band.csv")
   # 检查文件是否存在
-  if (!file.exists(a)) {
+  if (!file.exists(Q)) {
     print(paste("no files for", date_tau$dates_Q[i], "tau", date_tau$tau[i]))
     next  # 如果文件不存在，跳过这个循环
   }
   
   
-  data_q =  read.csv(a)
-  data_q = data_q[order(data_q$m),]
-  
-  data_q$Strike = data_q$x
-  data_q$Q_density = data_q$y
+  data_q = read.csv(Q_band)
   SpotPrice = mean(data_q$Strike * data_q$m)
   # data_q$Q_density = data_q$y
   
@@ -153,7 +149,8 @@ for (i in c(1:nrow(date_tau))){
     
     HDE = HDEgarch(garchfit, sp1.retts, data_q$Strike, 
                    tau, N =5000, SpotPrice)
-    EPK = data.frame(M = data_q$m,EPK = data_q$Q_density  / HDE, Q = data_q$Q_density, P = HDE,Strike = data_q$Strike ) 
+    EPK = data.frame(M = data_q$m,EPK = data_q$SPD  / HDE, EPK_lo = data_q$SPD_lo/ HDE, EPK_up = data_q$SPD_up/ HDE, 
+                     Q = data_q$SPD, Q_lo = data_q$SPD_lo,Q_up = data_q$SPD_up, P = HDE,Strike = data_q$Strike ) 
     
     EPK = EPK[EPK$EPK>0&EPK$M<1.07&EPK$M>0.93,]
     
@@ -167,7 +164,7 @@ for (i in c(1:nrow(date_tau))){
     if (nrow(EPK) > 0) {
       # Calculate xlim and ylim ensuring finite values
       xlim_vals <- range(EPK$M, na.rm = TRUE, finite = TRUE)
-      ylim_vals <- quantile(EPK$EPK, probs = c(0.05, 0.95), na.rm = TRUE, finite = TRUE)
+      ylim_vals <- quantile(c(EPK$EPK_lo,EPK$EPK,EPK$EPK_up), probs = c(0.05, 0.95), na.rm = TRUE, finite = TRUE)
       
       # Debugging: Print the calculated xlim and ylim values
       print(paste("xlim:", xlim_vals))
@@ -175,12 +172,17 @@ for (i in c(1:nrow(date_tau))){
       
       # Plot only if xlim and ylim values are finite
       if (all(is.finite(xlim_vals)) && all(is.finite(ylim_vals))) {
-        plot(EPK$M, EPK$EPK, type = 'l', col = 'black', lwd = 2,
+        par(mar = c(5, 6, 4, 2) + 0.1)  # 增大左侧和底部边距
+        plot(EPK$M, EPK$EPK, type = 'l', col = 'black', lwd = 6,
              xlab = "Moneyness", ylab = "EPK",
-             cex.lab = 1.25,                # 坐标轴标签字体大小
-             cex.axis = 1.25,
+             cex.lab = 2,                # 坐标轴标签字体大小
+             cex.axis = 2,
              xlim = xlim_vals, ylim = ylim_vals,   # x 和 y 轴的范围
-             cex.main = 1.25)
+             cex.main = 2)
+        
+        lines(EPK$M, EPK$EPK_lo, type = 'l', col = 'blue', lwd = 6, lty = 2)
+        
+        lines(EPK$M, EPK$EPK_up, type = 'l', col = 'blue', lwd = 6, lty = 2)
         
       } else {
         warning("Non-finite xlim or ylim values, plot not created.")
@@ -206,7 +208,11 @@ for (i in c(1:nrow(date_tau))){
     #      main = paste(dates_Q[i], "Classical EPK")
     # )
     # 
-    Plot_Out = data.frame(x = rep(EPK$M,2), density = c(EPK$Q,EPK$P), line = factor(rep(c("Q_density","P_density"), each = nrow(EPK))))
+    Plot_Out = data.frame(
+      x = rep(EPK$M, 4),
+      density = c(EPK$Q, EPK$Q_lo, EPK$Q_up, EPK$P),
+      line = factor(rep(c("Q_density", "Q_density_Lowbound", "Q_density_Upbound", "P_density"), each = nrow(EPK)))
+    )
     my_plot <-ggplot(Plot_Out, aes(x = x, y = density, color = line)) +
       geom_line(size = 1) +  
       labs(x=NULL,y = "Density")+
@@ -226,75 +232,4 @@ for (i in c(1:nrow(date_tau))){
 }
 
 
-
-for (i in c(1:length(dates_Q))) {
-  setwd(paste0(path, 'Q_density_files_SP500'))
-  a <- paste0(path_Qfile,"raw_Q_density_", dates_Q[i], "_tau", tau, ".csv")
-  
-  # 检查文件是否存在
-  if (!file.exists(a)) {
-    print(paste("no files for", dates_Q[i], "tau", tau))
-    next  # 如果文件不存在，跳过这个循环
-  }
-  
-  
-  data_q =  read.csv(a)
-  data_q = data_q[order(data_q$m),]
-  
-  data_q$Strike = data_q$x
-  data_q$Q_density = data_q$y
-  SpotPrice = mean(data_q$Strike * data_q$m)
-  # data_q$Q_density = data_q$y
-  
-  # sp1_h <- sp1[as.Date(sp1$Date) < as.Date(dates_Q[i]), ]
-  sp1_h <- sp1_h[(nrow(sp1_h)-4*360):nrow(sp1_h),]
-  sp1.retts = ts(log(sp1_h$Close)[2:nrow(sp1_h)]-log(sp1_h$Close)[1:(nrow(sp1_h)-1)])
-  
-  garchfit 		= ugarchfit(data=sp1.retts, spec=spec, solver = "hybrid")
-  
-  HDE = HDEgarch(garchfit, sp1.retts, data_q$Strike, 
-                 tau, N = length(data_q$Strike), SpotPrice)
-  EPK = data.frame(M = data_q$m,EPK = data_q$Q_density  / HDE, Q = data_q$Q_density, P = HDE,Strike = data_q$Strike ) 
-  
-  EPK = EPK[EPK$EPK>0&EPK$M<1.05&EPK$M>0.93,]
-  png(paste0(figure_save,"/SP500_",dates_Q[i],"_tau_",tau,"_Classical.png"), width = 800, height = 600, bg = "transparent")
-  
-  plot(EPK$M, EPK$EPK, type = 'l', col = 'black', 
-       xlab = "Moneyness", ylab = "EPK",
-       xlim = c(min(EPK$M), max(EPK$M)), ylim = c(quantile(EPK$EPK, probs = c(0.05)),quantile(EPK$EPK, probs = c(0.95))),
-       main = paste(dates_Q[i], "Classical EPK")
-  )
-  
-  dev.off()
-
-  # plot(EPK$Strike, EPK$Q, type = 'l', col = 'red', 
-  #      xlab = "Strike", ylab = "Q density",
-  #      xlim = c(min(EPK$Strike), max(EPK$Strike)), ylim = c(quantile(EPK$Q, probs = c(0.01)),quantile(EPK$Q, probs = c(0.99))),
-  #      main = paste(dates_Q[i], "Q density")
-  # )
-  # lines(EPK$Strike, EPK$P, col = 'blue')
-  # 
-  # 
-  # plot(EPK$Strike, EPK$P, type = 'l', col = 'black', 
-  #      xlab = "Strike", ylab = "P density",
-  #      xlim = c(min(EPK$Strike), max(EPK$Strike)), ylim = c(quantile(EPK$P, probs = c(0.01)),quantile(EPK$P, probs = c(0.99))),
-  #      main = paste(dates_Q[i], "Classical EPK")
-  # )
-  # 
-  Plot_Out = data.frame(x = rep(EPK$M,2), density = c(EPK$Q,EPK$P), line = factor(rep(c("Q_density","P_density"), each = nrow(EPK))))
-  my_plot <-ggplot(Plot_Out, aes(x = x, y = density, color = line)) +
-    geom_line(size = 1) +  
-    labs(x=NULL,y = "Density")+
-    theme(legend.key = element_rect(fill = "transparent"),
-          axis.ticks.length = unit(-0.2, "cm"),
-          panel.grid = element_blank(),
-          axis.line = element_line(color = "black", linewidth = 0.5),
-          plot.background = element_rect(fill = "transparent"),
-          legend.background = element_rect(fill = "transparent"),  # Set legend background to transparent
-          panel.background = element_rect(fill = "transparent"),
-    )
-  plot(my_plot)
-  ggsave(paste0(figure_save,"/SP500_Density_",dates_Q[i],"_tau_",tau,".png"), my_plot, width = 3200, height = 1600, units = "px")
-  
-}
 
