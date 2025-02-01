@@ -132,31 +132,25 @@ rolling = 4
 # dates_Q <- dates[1:(length(dates) - 1)]
 
 # date_tau = data.frame(dates_Q = c("2022-12-27","2022-10-04","2022-10-28"),tau = c(17,24,28))
-date_tau = data.frame(dates_Q = c("2022-11-17","2022-10-29","2022-07-22","2022-08-31"),tau = c(8,13,7,30))
+# date_tau = data.frame(dates_Q = c("2022-11-17","2022-10-29","2022-07-22","2022-08-31"),tau = c(8,13,7,30))
+date_tau = data.frame(dates_Q = c("2022-11-17","2022-10-29"),tau = c(8,13))
 
 for (i in c(1:nrow(date_tau))){
   setwd(paste0(path, 'Q_density_files_new'))
   tau = date_tau$tau[i]
   figure_save = paste0(path,"EPKPlot/tau_",tau)
   dir.create(figure_save, showWarnings = FALSE)
-  a <- paste0(path_Qfile,"raw_Q_density_", date_tau$dates_Q[i], "_tau", date_tau$tau[i], ".csv")
-  
+ 
+  Q_band <- paste0(path_Qfile,"raw_Q_density_", date_tau$dates_Q[i], "_tau", date_tau$tau[i], "_band.csv")
   # 检查文件是否存在
-  if (!file.exists(a)) {
+  if (!file.exists(Q_band)) {
     print(paste("no files for", date_tau$dates_Q[i], "tau", date_tau$tau[i]))
     next  # 如果文件不存在，跳过这个循环
   }
   
-  
-  data_q =  read.csv(a)
-  data_q = data_q[order(data_q$m),]
-  
-  data_q$Strike = data_q$x
-  data_q$Q_density = data_q$y
+  data_q = read.csv(Q_band)
   SpotPrice = mean(data_q$Strike * data_q$m)
-  # data_q$Q_density = data_q$y
   
-  # sp1_h <- sp1[as.Date(sp1$Date) < as.Date(dates_Q[i]), ]
   for (iRoll in rolling){
     sp1_h <- sp1[as.Date(sp1$Date) < as.Date(date_tau$dates_Q[i]), ]
     sp1_h <- sp1[max(1,(nrow(sp1_h)-iRoll*360)):nrow(sp1_h),]
@@ -166,12 +160,14 @@ for (i in c(1:nrow(date_tau))){
     
     HDE = HDEgarch(garchfit, sp1.retts, data_q$Strike, 
                    tau, N = 5000, SpotPrice)
-    EPK = data.frame(M = data_q$m,EPK = data_q$Q_density  / HDE, Q = data_q$Q_density, P = HDE,Strike = data_q$Strike ) 
+    
+    EPK = data.frame(M = data_q$m,EPK = data_q$SPD  / HDE, EPK_lo = data_q$SPD_lo/ HDE, EPK_up = data_q$SPD_up/ HDE, 
+                     Q = data_q$SPD, Q_lo = data_q$SPD_lo,Q_up = data_q$SPD_up, P = HDE,Strike = data_q$Strike ) 
     
     EPK = EPK[EPK$EPK>0&EPK$M<1.07&EPK$M>0.8,]
     
     # Save the plot to a PNG file
-    png(paste0(figure_save, "/BTC_", date_tau$dates_Q[i], "_tau_", tau, "_", iRoll, "YearRoll_Classical.png"), width = 800, height = 600, bg = "transparent")
+    png(paste0(figure_save, "/BTC_", date_tau$dates_Q[i], "_tau_", tau, "_", iRoll, "YearRoll_Classical.png"), width = 1000, height = 800, bg = "transparent")
     
     # Ensure there are no missing or infinite values in EPK$M and EPK$EPK
     EPK <- EPK[!is.na(EPK$M) & !is.na(EPK$EPK) & !is.infinite(EPK$M) & !is.infinite(EPK$EPK), ]
@@ -181,23 +177,25 @@ for (i in c(1:nrow(date_tau))){
     if (nrow(EPK) > 0) {
       # Calculate xlim and ylim ensuring finite values
       xlim_vals <- range(EPK$M, na.rm = TRUE, finite = TRUE)
-      ylim_vals <- quantile(EPK$EPK, probs = c(0.05, 0.95), na.rm = TRUE, finite = TRUE)
+      ylim_vals <- quantile(c(EPK$EPK_lo,EPK$EPK,EPK$EPK_up), probs = c(0.05, 0.95), na.rm = TRUE, finite = TRUE)
       
-     
       # Debugging: Print the calculated xlim and ylim values
       print(paste("xlim:", xlim_vals))
       print(paste("ylim:", ylim_vals))
       
       # Plot only if xlim and ylim values are finite
       if (all(is.finite(xlim_vals)) && all(is.finite(ylim_vals))) {
-         
-        plot(EPK$M, EPK$EPK, type = 'l', col = 'black', lwd = 2,
+        par(mar = c(5, 6, 4, 2) + 0.1)  # 增大左侧和底部边距
+        plot(EPK$M, EPK$EPK, type = 'l', col = 'black', lwd = 6,
              xlab = "Moneyness", ylab = "EPK",
-             cex.lab = 1.25,                # 坐标轴标签字体大小
-             cex.axis = 1.25,
+             cex.lab = 2,                # 坐标轴标签字体大小
+             cex.axis = 2,
              xlim = xlim_vals, ylim = ylim_vals,   # x 和 y 轴的范围
-             cex.main = 1.25)
+             cex.main = 2)
         
+        lines(EPK$M, EPK$EPK_lo, type = 'l', col = 'blue', lwd = 6, lty = 2)
+        
+        lines(EPK$M, EPK$EPK_up, type = 'l', col = 'blue', lwd = 6, lty = 2)
         
       } else {
         warning("Non-finite xlim or ylim values, plot not created.")
@@ -223,7 +221,11 @@ for (i in c(1:nrow(date_tau))){
     #      main = paste(dates_Q[i], "Classical EPK")
     # )
     # 
-    Plot_Out = data.frame(x = rep(EPK$M,2), density = c(EPK$Q,EPK$P), line = factor(rep(c("Q_density","P_density"), each = nrow(EPK))))
+    Plot_Out = data.frame(
+      x = rep(EPK$M, 4),
+      density = c(EPK$Q, EPK$Q_lo, EPK$Q_up, EPK$P),
+      line = factor(rep(c("Q_density", "Q_density_Lowbound", "Q_density_Upbound", "P_density"), each = nrow(EPK)))
+    )
     my_plot <-ggplot(Plot_Out, aes(x = x, y = density, color = line)) +
       geom_line(size = 1) +  
       labs(x=NULL,y = "Density")+

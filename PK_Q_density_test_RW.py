@@ -4,6 +4,157 @@ Created on Tue May 14 11:07:59 2024
 
 @author: leizhou
 """
+
+def nonneg_pseudoinverse(A):
+
+     m, n = A.shape
+     I = np.eye(n)  # 单位矩阵
+     X = np.zeros((n, n))  # 初始化结果矩阵
+     
+     for j in range(n):  
+         X[:, j], _ = nnls(A, I[:, j])  # 求解 Ax = b, 使得 x >= 0
+     
+     return X
+ 
+def Ker(u):
+    # Gaussian kernel function (standard normal distribution)
+    if isinstance(u, (int, float)):  # If u is a scalar
+        return norm.pdf(u)  # Calculate PDF for scalar u
+    else:
+        return np.array([norm.pdf(val) for val in u])  # Handle list or array of u
+
+def K_h(u, h):
+    # Scaled kernel function: K(u/h) / h
+    if isinstance(u, (int, float)):  # If u is scalar
+        return Ker(u / h) / h
+    else:
+        return np.array([Ker(val / h) / h for val in u])  # Handle list or array of u
+
+def K_prime(u):
+    # Derivative of the Gaussian kernel
+    if isinstance(u, (int, float)):  # If u is scalar
+        return -u * norm.pdf(u)  # Calculate derivative for scalar u
+    else:
+        return np.array([-val * norm.pdf(val) for val in u])  # Handle list or array of u
+
+def Kjp(u, j, N):
+    # Kernel function with polynomial terms and determinant adjustment
+    kk = len(u)
+    ret = np.zeros(kk)
+    
+    for i in range(kk):
+        M = N.copy()
+        M[:, j] = np.power(u[i], np.arange(N.shape[0]))
+        
+        if abs(u[i]) > 1:
+            ret[i] = 0
+        else:
+            det_M = np.linalg.det(M)  # Determinant of matrix M
+            det_N = np.linalg.det(N)  # Determinant of matrix N
+            ret[i] = Ker(u[i]) * det_M / det_N if det_N != 0 else 0
+            
+    return ret
+
+def func_L(p, h, alpha, n):  # Add `n` as a parameter for sample size or related value
+    
+    # Initialize matrices and vectors
+    N = np.zeros((p+1, p+1))
+    Q = np.zeros((p+1, p+1))
+    C = np.zeros(p+1)
+    L = np.zeros(p+1)
+
+    # Helper function for integration
+    def integrate_func(func, lower, upper):
+        result, _ = quad(func, lower, upper)
+        return result
+
+    # Fill matrix Q and N with appropriate integrals
+    for i in range(p + 1):  # Change to range(p + 1) to include p
+        for j in range(p + 1):  # Change to range(p + 1) to include p
+            if i > 1 and j > 1:
+                Q[i, j] = integrate_func(lambda xx: xx**(i + j) * (K_prime(xx))**2, -np.inf, np.inf) - 0.5 * (i * (i - 1) + j * (j - 1)) * integrate_func(lambda x: x**(i + j - 2) * (Ker(x))**2, -np.inf, np.inf)
+            elif i <= 1 and j <= 1:
+                Q[i, j] = integrate_func(lambda xx: xx**(i + j) * (K_prime(xx))**2, -np.inf, np.inf)
+            elif i <= 1 and j > 1:
+                Q[i, j] = integrate_func(lambda xx: xx**(i + j) * (K_prime(xx))**2, -np.inf, np.inf) - 0.5 * j * (j - 1) * integrate_func(lambda x: x**(i + j - 2) * (Ker(x))**2, -np.inf, np.inf)
+            elif i > 1 and j <= 1:
+                Q[i, j] = integrate_func(lambda xx: xx**(i + j) * (K_prime(xx))**2, -np.inf, np.inf) - 0.5 * i * (i - 1) * integrate_func(lambda x: x**(i + j - 2) * (Ker(x))**2, -np.inf, np.inf)
+            N[i, j] = integrate_func(lambda xx: xx**(i + j) * Ker(xx), -1, 1)
+
+
+    # Invert matrix N
+    N_i = np.linalg.inv(N)
+
+    # Compute C and L
+    for j in range(p + 1):
+        C[j] = (N_i @ Q @ N_i)[j, j] / integrate_func(lambda xx: (Kjp([xx], j, N))**2, -np.inf, np.inf)
+        L[j] = factorial(j) * (n * h**(2 * j + 1))**(-0.5) * ((-2 * log(h))**0.5 + (-2 * log(h))**(-0.5) * (-log(-0.5 * log(1 - alpha)) + log(sqrt(C[j]) / (2 * pi))))
+
+    print(C)
+    return L
+
+def bands(p, h, hat_theta, x, y, vx):
+    # p=2
+    # h = 0.08
+    # x =np.array(sub['moneyness']) 
+    # y = np.array(sub['mark_iv']) 
+    # vx = M_std
+    # hat_theta = sigmas
+    
+    L = func_L(p, h, 0.05, n = len(x))
+    sigma2=1
+       
+    up_band = np.zeros((len(vx), p + 1))
+    lo_band = np.zeros((len(vx), p + 1))
+    V_all = np.zeros((len(vx), p + 1))
+    
+    for i in range(len(vx)):
+        xx = vx[i]
+        B_V = np.zeros((p + 1, p + 1))
+        K_V = np.zeros((p + 1, p + 1))
+    
+        for j in range(len(x)):
+            # 计算 K.h(x[j] - xx, h)
+         
+            K_h_val = K_h(x[j] - xx, h)
+    
+            # 计算对角矩阵 diag(h^(0:p))
+            diag_matrix = np.diag(h ** np.arange(0, p + 1))
+            inv_diag_matrix = np.linalg.inv(diag_matrix)
+    
+            # 计算 (x[j] - xx) ** (0:p) 并确保它是列向量
+            x_diff_power = np.power(x[j] - xx, np.arange(0, p + 1)).reshape(-1, 1)  # 列向量
+    
+            # 更新 B.V
+            B_V += K_h_val * (1 / sigma2) * (inv_diag_matrix @ (x_diff_power @ x_diff_power.T) @ inv_diag_matrix)
+    
+            # 计算 K.V
+            term1 = K_h_val ** 2
+            residual = y[j] - np.sum(hat_theta[i, :] * (x[j] - xx) ** np.arange(p + 1))
+            term2 = (residual / sigma2) ** 2
+    
+            # 计算矩阵
+            mat_product = inv_diag_matrix @ (x_diff_power @ x_diff_power.T) @ inv_diag_matrix
+    
+            # 更新 K.V
+            K_V += h * term1 * term2 * mat_product
+    
+        # 归一化
+        B_V /= len(x)
+        K_V /= len(x)
+    
+        # 计算 V
+        B_inv = np.linalg.inv(B_V)
+        V = B_inv @ K_V @ B_inv
+        V_all[i, :] = np.diag(V)
+    
+        # 计算置信区间
+        for ip in range(p + 1):
+            lo_band[i, ip] = -L[ip] * np.sqrt(V[ip, ip])
+            up_band[i, ip] = L[ip] * np.sqrt(V[ip, ip])
+
+    return {'L': L, 'V': V_all, 'lo_band': lo_band, 'up_band': up_band}
+
 def create_single_folder(folder_path):
     try:
         os.mkdir(folder_path)
@@ -370,6 +521,7 @@ def spdbl(sub, date, tau, r_const):
     
         # vola = sub['mark_iv'].astype(float)/100
         tau = sub['tau'].astype(float)
+        tau_uni = np.array(tau)[0]
         #m = float(sub['index_price']/sub['strike'] # Spot price corrected for div divided by k ((s-d)/k); 
         #moneyness of an option; div always 0 here
         r = sub['interest_rate'].astype(float)
@@ -409,9 +561,33 @@ def spdbl(sub, date, tau, r_const):
         # tau is too long here!!
         spd = compute_spd(sigma, sigma1, sigma2, newtau,  S, M_std, r_const)
         
-        plt.figure(figsize=(10, 6))
-        plt.scatter(spd['m'],spd['y'], color='r')
-        plt.show
+        sigmas = [sigma, sigma1, sigma2]
+        sigmas = np.array(sigmas)
+        sigmas = sigmas.T
+        
+        bands_init = bands(p=2, h=0.08, hat_theta=sigmas, x=np.array(sub['moneyness']) , y=np.array(sub['mark_iv']) , vx=M_std)
+       
+        # d1=(log(mon.grid.scaled)+tau*(int_rate+0.5*(sigma)^2)) / (sqrt(sigma)*sqrt(tau));
+        d1 = (np.log(M_std) + tau_uni * (int_rate + 0.5 * (sigma ** 2))) / (sigma * np.sqrt(tau_uni))
+        
+        d2=d1-np.sqrt(sigma)*sqrt(tau_uni);
+  
+        dgds = np.exp(-int_rate * tau_uni) * (M_std ** 2 * norm.pdf(d1) / spd['x'] ** 2 - np.exp(-int_rate * tau_uni) * norm.pdf(d2) / M_std)
+       
+        band_limit = bands_init["L"][2] * np.sqrt(bands_init["V"][:,2]) * dgds
+        band_lo = spd['y'] - abs(spd['y']*band_limit)
+        band_up = spd['y'] + abs(spd['y']*band_limit)
+        spd_band = pd.DataFrame({
+                'm': spd['m'],  
+                'Strike': spd['x'],  
+                'SPD': spd['y'],    
+                'SPD_lo': band_lo,  
+                'SPD_up': band_up   
+            })
+        
+        # plt.figure(figsize=(10, 6))
+        # plt.scatter(spd['m'],spd['y'], color='r')
+        # plt.show
         
         
         # kde = gaussian_kde(spd['m'], weights=spd['y'])
@@ -435,7 +611,7 @@ def spdbl(sub, date, tau, r_const):
         # plt.scatter(M_combined,Q_combined, color='r')
         # plt.show
     
-    return spd, sub
+    return spd, sub, spd_band
 
 
 # main body
@@ -459,17 +635,24 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from math import ceil
 
+
+from scipy.interpolate import UnivariateSpline
+from scipy.integrate import quad
+from math import factorial, pi, log, sqrt
+from scipy.stats import norm
+from scipy.optimize import nnls
+
 # path = '/Users/tracy/Library/CloudStorage/OneDrive-NationalUniversityofSingapore/PAPER/Pricing/code/test/'
 path = "/Users/ruting/Library/Mobile Documents/com~apple~CloudDocs/PK_BTC/code_data/main_code/"
 os.chdir(path)
 
 create_single_folder(path+'Rookley_IV')
-file = 'final_btc_option_2021-01-01-2022-03-31.csv'
+# file = 'final_btc_option_2021-01-01-2022-03-31.csv'
 # file = 'final_btc_option_2021-04-01-2021-06-30.csv'
 # file = 'final_btc_option_2021-07-01-2021-09-29.csv'
 # file = 'final_btc_option_2021-10-01-2021-12-30.csv'
 # file = 'final_btc_option_2022-07-01-2022-09-29.csv'
-# file = 'final_btc_option_2022-10-01-2022-12-30.csv'
+file = 'final_btc_option_2022-10-01-2022-12-30.csv'
 filename = os.path.join( path,'BRC_final/', file)
 data_option = pd.read_csv(filename)
 
@@ -512,6 +695,9 @@ unique_dates = unique_dates[(unique_dates>start_date) & (unique_dates<end_date)]
 unique_dates = np.sort(unique_dates)
 unique_taus = np.sort(unique_taus)
 
+unique_dates = ['2022-11-17', '2022-10-29']
+unique_dates = np.array(unique_dates, dtype='datetime64')
+
 # date = np.datetime64('2022-09-08')
 
 for date in unique_dates:
@@ -531,7 +717,7 @@ for date in unique_dates:
       
             try:
                 # spd, sub = spdbl(df, date, tau, int_rate)
-                spd, sub = spdbl(sub, date, tau, int_rate)
+                spd, sub,spd_band = spdbl(sub, date, tau, int_rate)
             except ValueError as e:
                 print(f"Skipping date {date_str} and tau {tau} due to error: {e}")
                 continue
@@ -546,6 +732,13 @@ for date in unique_dates:
             else:
                 output_filename = os.path.join(output_dir, f'raw_Q_density_{date_str}_tau{tau_str}.csv')
                 spd.to_csv(output_filename, index=False)
+                
+            if isinstance(spd_band, int):
+                print('no result')
+            else:
+                output_filename = os.path.join(output_dir, f'raw_Q_density_{date_str}_tau{tau_str}_band.csv')
+                spd_band.to_csv(output_filename, index=False)
+
 
 
 
